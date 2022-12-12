@@ -1007,6 +1007,14 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             'font: 87 8pt \'Segoe UI Black\';'
         })
 
+        self.ChannelsHintChangeSignal.emit({
+            'text':
+            'ID КАНАЛОВ',
+            'style':
+            'color: rgb(175, 177, 181);\n'
+            'font: 87 8pt \'Segoe UI Black\';'
+        })
+
         self.MainButtonChangeSignal.emit({
             'text':
             'Атаковать',
@@ -1023,6 +1031,18 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             ]
 
         LineID = 0
+
+        if self.ChannelsInput.toPlainText() == '':
+            for Token in Tokens:
+                if not Token.startswith('https://'):
+                    self.ChannelsHintChangeSignal.emit({
+                        'text':
+                        'ID КАНАЛОВ - ОБЯЗАТЕЛЬНО',
+                        'style':
+                        'color: rgb(243, 134, 136);\n'
+                        'font: 87 8pt \'Segoe UI Black\';'
+                    })
+                    return
 
         for Token in Tokens:
             self.MainButtonChangeSignal.emit({
