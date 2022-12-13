@@ -10,6 +10,9 @@ from random import randint, seed
 from threading import Thread
 from time import sleep, time
 from random import randint, seed
+import re
+import base64
+import json
 
 try:
     import clipboard
@@ -59,16 +62,160 @@ def GetResourcePath(Filename):
 Home = expanduser('~')
 
 
-class AllowWindowMovement:
-    WarningWindow = False
-    MainWindow = False
-    LogsWindow = False
+def FetchBuildNumber():
+    try:
+        LoginPage = requests.get('https://discord.com/login',
+                                 headers={
+                                     'Accept-Encoding': 'gzip, deflate',
+                                     'User-Agent': APPState.UserAgent
+                                 },
+                                 timeout=10).text
+        BuildURL = 'https://discord.com/assets/' + re.compile(
+            r'assets/+([a-z0-9]+)\.js').findall(LoginPage)[-2] + '.js'
+        BuildFile = requests.get(BuildURL,
+                                 headers={
+                                     'Accept-Encoding': 'gzip, deflate'
+                                 },
+                                 timeout=10).text
+        BuildIndex = BuildFile.find('buildNumber') + 24
+
+        Index = 1
+
+        while True:
+            try:
+                BuildNumber = int(BuildFile[BuildIndex:BuildIndex + Index])
+                Index += 1
+
+            except:
+                return BuildNumber
+
+    except:
+        return 88863
+
+
+def FetchBrowserVersion():
+    try:
+        Response = requests.get('https://omahaproxy.appspot.com/all.json',
+                                headers={'User-Agent': APPState.UserAgent},
+                                timeout=10)
+        if Response[0]['versions'][4]['channel'] == 'stable':
+            return Response[0]['versions'][4]['version']
+
+    except:
+        return '91.0.4472.77'
+
+
+def FetchCookies():
+    Response = requests.get('https://discord.com',
+                            headers={'User-Agent': APPState.UserAgent})
+
+    Cookies = ''
+
+    for Cookie in Response.cookies:
+        Cookies += f'{Cookie.name}={Cookie.value}; '
+
+    return Cookies[:-2]
 
 
 class APPState:
     LogsWindowIsOpened = False
+    JoinerWindowIsOpened = False
     LogsText = ''
     LogWriteLimit = 50
+    UserAgent = UAgent(browsers=['chrome']).random
+
+
+class GuildJoinerState:
+    ClientBuildNumber = None
+    BrowserVersion = None
+    UserAgent = None
+    Cookie = None
+    SuperProperties = None
+    EncodedSuperProperties = None
+
+
+def SetupGuildJoiner():
+    GuildJoinerState.ClientBuildNumber = FetchBuildNumber()
+    GuildJoinerState.BrowserVersion = FetchBrowserVersion()
+    GuildJoinerState.UserAgent = APPState.UserAgent
+    GuildJoinerState.Cookie = FetchCookies()
+
+    GuildJoinerState.SuperProperties = {
+        'os': 'Windows',
+        'browser': 'Chrome',
+        'device': '',
+        'browser_user_agent': GuildJoinerState.UserAgent,
+        'browser_version': GuildJoinerState.BrowserVersion,
+        'os_version': '10',
+        'referrer': '',
+        'referring_domain': '',
+        'referrer_current': '',
+        'referring_domain_current': '',
+        'release_channel': 'stable',
+        'system_locale': 'en-US',
+        'client_build_number': GuildJoinerState.ClientBuildNumber,
+        'client_event_source': None
+    }
+
+    GuildJoinerState.EncodedSuperProperties = base64.b64encode(
+        json.dumps(GuildJoinerState.SuperProperties).encode()).decode('utf-8')
+
+
+Thread(target=SetupGuildJoiner).start()
+
+
+def JoinGuild(Token, InviteCode):
+    Response = requests.post(
+        f'https://discord.com/api/v9/invites/{InviteCode}',
+        headers={
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Language': 'en-US',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Origin': 'https://discord.com',
+            'Pragma': 'no-cache',
+            'Referer': 'https://discord.com/channels/@me',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'User-Agent': GuildJoinerState.UserAgent,
+            'X-Super-Properties': GuildJoinerState.EncodedSuperProperties,
+            'Authorization': Token,
+            'Cookie': GuildJoinerState.Cookie
+        })
+    return Response
+
+
+def LeaveGuild(Token, ID):
+    Response = requests.delete(
+        f'https://discord.com/api/v9/users/@me/guilds/{ID}',
+        headers={
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Language': 'en-US',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Origin': 'https://discord.com',
+            'Pragma': 'no-cache',
+            'Referer': 'https://discord.com/channels/@me',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'User-Agent': GuildJoinerState.UserAgent,
+            'X-Super-Properties': GuildJoinerState.EncodedSuperProperties,
+            'Authorization': Token,
+            'Cookie': GuildJoinerState.Cookie
+        })
+
+    return Response
+
+
+class AllowWindowMovement:
+    WarningWindow = False
+    MainWindow = False
+    LogsWindow = False
+    JoinerWindow = False
 
 
 class ValidThreadIDS:
@@ -574,6 +721,667 @@ def ParseString(Content):
     return Content
 
 
+class Ui_JoinerWindow(QtWidgets.QMainWindow):
+
+    IsPinned = False
+    RunButtonChangeSignal = QtCore.pyqtSignal(dict)
+    CodeHintChangeSignal = QtCore.pyqtSignal(dict)
+    LeaveButtonChangeSignal = QtCore.pyqtSignal(dict)
+    JoinerIsWorking = False
+    LeaverIsWorking = False
+
+    def InitWindow(self, JoinerWindow):
+        APPState.JoinerWindowIsOpened = True
+
+        JoinerWindow.setObjectName('WarningWindow')
+        JoinerWindow.resize(296, 169)
+        JoinerWindow.setMinimumSize(QtCore.QSize(296, 169))
+        JoinerWindow.setMaximumSize(QtCore.QSize(296, 169))
+        JoinerWindow.setStyleSheet(
+            'QToolTip {\n'
+            '    background-color: rgb(60, 63, 69);\n'
+            '    border: black solid 1px;\n'
+            '    border-radius: 3;\n'
+            '    color: rgb(200, 200, 200);\n'
+            '    font: 87 10pt \'Segoe UI Black\';\n'
+            '}\n'
+            '\n'
+            'QScrollBar:vertical {\n'
+            '    border: none;\n'
+            '    background: rgb(32, 34, 37);\n'
+            '    width: 15px;\n'
+            '    margin: 15px 0 15px 0;\n'
+            '}\n'
+            'QScrollBar::handle:vertical {    \n'
+            '    background-color: rgb(54, 57, 63);\n'
+            '    min-height: 15px;\n'
+            '    border-radius: 3px;\n'
+            '}\n'
+            'QScrollBar::handle:vertical:hover {    \n'
+            '    background-color: rgb(50, 53, 59);\n'
+            '    min-height: 15px;\n'
+            '    border-radius: 3px;\n'
+            '}\n'
+            'QScrollBar::handle:vertical:pressed {    \n'
+            '    background-color: rgb(46, 49, 55);\n'
+            '    min-height: 15px;\n'
+            '    border-radius: 3px;\n'
+            '}\n'
+            'QScrollBar::sub-line:vertical {\n'
+            '    border: none;\n'
+            '    background-color: rgb(54, 57, 63);\n'
+            '    height: 10px;\n'
+            '    border-radius: 3px;\n'
+            '    subcontrol-position: top;\n'
+            '    subcontrol-origin: margin;\n'
+            '}\n'
+            'QScrollBar::sub-line:vertical:hover {    \n'
+            '    background-color: rgb(50, 53, 59);\n'
+            '}\n'
+            'QScrollBar::sub-line:vertical:pressed {    \n'
+            '    background-color: rgb(46, 49, 55);\n'
+            '}\n'
+            'QScrollBar::add-line:vertical {\n'
+            '    border: none;\n'
+            '    background-color: rgb(54, 57, 63);\n'
+            '    height: 10px;\n'
+            '    border-radius: 3px;\n'
+            '    subcontrol-position: bottom;\n'
+            '    subcontrol-origin: margin;\n'
+            '}\n'
+            'QScrollBar::add-line:vertical:hover {    \n'
+            '    background-color: rgb(50, 53, 59);\n'
+            '}\n'
+            'QScrollBar::add-line:vertical:pressed {    \n'
+            '    background-color: rgb(46, 49, 55);\n'
+            '}\n'
+            'QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {\n'
+            '    background: none;\n'
+            '}\n'
+            'QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {\n'
+            '    background: none;\n'
+            '}\n'
+            '\n'
+            'QPlainTextEdit {\n'
+            '    background-color: rgb(32, 34, 37);\n'
+            '    border-radius: 4;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255);\n'
+            '    padding-left: 3;\n'
+            '    padding-right: 3;\n'
+            '    padding-top: 3;\n'
+            '    padding-bottom: 3\n'
+            '}\n'
+            '\n'
+            'QPlainTextEdit:hover {\n'
+            '    background-color: rgb(32, 34, 37);\n'
+            '    border-radius: 4;\n'
+            '    border-style: solid;\n'
+            '    border-width: 3;\n'
+            '    border-color: rgb(41, 43, 47);\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255);\n'
+            '    padding-left: 3;\n'
+            '    padding-right: 3;\n'
+            '    padding-top: 3;\n'
+            '    padding-bottom: 3\n'
+            '}')
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        self.CentralWidget = QtWidgets.QWidget(JoinerWindow)
+        self.CentralWidget.setObjectName('centralwidget')
+        self.MainBG = PYQTHoverLabel(self.CentralWidget)
+        self.MainBG.setGeometry(QtCore.QRect(0, 0, 296, 166))
+        self.MainBG.setStyleSheet('background-color: rgb(47, 49, 54);\n'
+                                  'border-radius: 10')
+        self.MainBG.setObjectName('MainBG')
+        self.FormBG = PYQTHoverLabel(self.CentralWidget)
+        self.FormBG.setGeometry(QtCore.QRect(5, 35, 286, 81))
+        self.FormBG.setStyleSheet('background-color: rgb(54, 57, 63);\n'
+                                  'border-radius: 10')
+        self.FormBG.setObjectName('FormBG')
+        self.InviteInput = QtWidgets.QPlainTextEdit(self.CentralWidget)
+        self.InviteInput.setGeometry(QtCore.QRect(17, 71, 259, 29))
+        self.InviteInput.setObjectName('InviteInput')
+        self.CodeHint = PYQTHoverLabel(self.CentralWidget)
+        self.CodeHint.setGeometry(QtCore.QRect(15, 45, 256, 21))
+        self.CodeHint.setStyleSheet('color: rgb(175, 177, 181);\n'
+                                    'font: 87 8pt \'Segoe UI Black\';')
+        self.CodeHint.setAlignment(QtCore.Qt.AlignLeading
+                                   | QtCore.Qt.AlignLeft
+                                   | QtCore.Qt.AlignVCenter)
+        self.CodeHint.setObjectName('CodeHint')
+        self.RunButton = PYQTHoverButton(self.CentralWidget)
+        self.RunButton.setGeometry(QtCore.QRect(209, 126, 76, 31))
+        self.RunButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.RunButton.setStyleSheet(
+            'QPushButton {\n'
+            '    background-color: rgb(88, 101, 242);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255);\n'
+            '}\n'
+            '\n'
+            'QPushButton:hover {\n'
+            '    background-color: rgb(81, 93, 224);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255);\n'
+            '}'
+            'QPushButton:pressed {\n'
+            '    background-color: rgb(64, 73, 177);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}')
+        self.RunButton.setObjectName('RunButton')
+        self.LeaveButton = PYQTHoverButton(self.CentralWidget)
+        self.LeaveButton.setGeometry(QtCore.QRect(124, 126, 76, 31))
+        self.LeaveButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.LeaveButton.setStyleSheet(
+            'QPushButton {\n'
+            '    background-color: rgb(59, 165, 93);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}\n'
+            '\n'
+            'QPushButton:hover {\n'
+            '    background-color: rgb(53, 149, 84);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}'
+            'QPushButton:pressed {\n'
+            '    background-color: rgb(44, 124, 70);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}')
+        self.LeaveButton.setObjectName('Run')
+        self.CloseButton = PYQTHoverButton(self.CentralWidget)
+        self.CloseButton.setGeometry(QtCore.QRect(260, 5, 31, 26))
+        self.CloseButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.CloseButton.setStyleSheet(
+            'QPushButton {\n'
+            '    background-color: rgb(234, 65, 68);\n'
+            '    border-radius: 5\n'
+            '}\n'
+            'QPushButton:hover {\n'
+            '    background-color: rgb(216, 60, 63);\n'
+            '    border-radius: 5\n'
+            '}')
+        icon = QtGui.QIcon()
+        icon.addPixmap(QtGui.QPixmap(GetResourcePath('close.png')),
+                       QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        self.CloseButton.setIcon(icon)
+        self.CloseButton.setObjectName('CloseButton')
+        self.PinButton = PYQTHoverButton(self.CentralWidget)
+        self.PinButton.setGeometry(QtCore.QRect(225, 5, 31, 26))
+        self.PinButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.PinButton.setStyleSheet('background-color: rgb(47, 49, 54);\n'
+                                     'border-radius: 5')
+        icon1 = QtGui.QIcon()
+        icon1.addPixmap(QtGui.QPixmap(GetResourcePath('pin.png')),
+                        QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        self.PinButton.setIcon(icon1)
+        self.PinButton.setObjectName('PinButton')
+        self.HideButton = PYQTHoverButton(self.CentralWidget)
+        self.HideButton.setGeometry(QtCore.QRect(190, 5, 31, 26))
+        self.HideButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.HideButton.setStyleSheet(
+            'QPushButton {\n'
+            '    background-color: rgb(47, 49, 54);\n'
+            '    border-radius: 5\n'
+            '}\n'
+            'QPushButton:hover {\n'
+            '    background-color: rgb(60, 63, 69);\n'
+            '    border-radius: 5\n'
+            '}')
+        icon2 = QtGui.QIcon()
+        icon2.addPixmap(QtGui.QPixmap(GetResourcePath('hide.png')),
+                        QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        self.HideButton.setIcon(icon2)
+        self.HideButton.setObjectName('HideButton')
+        self.WindowTitleLabel = PYQTHoverLabel(self.CentralWidget)
+        self.WindowTitleLabel.setGeometry(QtCore.QRect(10, 5, 116, 26))
+        self.WindowTitleLabel.setStyleSheet(
+            'color: rgb(200, 200, 200);\n'
+            'font: 87 10pt \'Segoe UI Black\';')
+        self.WindowTitleLabel.setAlignment(QtCore.Qt.AlignLeading
+                                           | QtCore.Qt.AlignLeft
+                                           | QtCore.Qt.AlignVCenter)
+        self.WindowTitleLabel.setObjectName('WindowTitleLabel')
+        self.WindowMovementHitbox = PYQTHoverLabel(self.CentralWidget)
+        self.WindowMovementHitbox.setGeometry(QtCore.QRect(130, 5, 56, 26))
+        self.WindowMovementHitbox.setStyleSheet(
+            'background-color: rgb(47, 49, 54)')
+        self.WindowMovementHitbox.setObjectName('WindowMovementHitbox')
+        JoinerWindow.setCentralWidget(self.CentralWidget)
+
+        QtCore.QMetaObject.connectSlotsByName(JoinerWindow)
+
+        JoinerWindow.setWindowTitle('HeckerAttack 2.0 - Guild Joiner')
+        self.CloseButton.setToolTip('Закрыть')
+        self.PinButton.setToolTip('Закрепить окно на переднем плане')
+        self.HideButton.setToolTip('Свернуть')
+        self.WindowTitleLabel.setText('Joiner')
+        self.CodeHint.setText('КОД ПРИГЛАШЕНИЯ')
+        self.RunButton.setText('Войти')
+        self.LeaveButton.setText('Выйти')
+
+        self.WindowTitleLabel.HoverSignal.connect(self.ChangeWindowMovement)
+        self.WindowMovementHitbox.HoverSignal.connect(
+            self.ChangeWindowMovement)
+        self.PinButton.HoverSignal.connect(self.PinButtonHoverEvent)
+
+        self.CloseButton.clicked.connect(self.Close)
+        self.HideButton.clicked.connect(self.showMinimized)
+        self.PinButton.clicked.connect(self.PinWindow)
+
+        self.RunButtonChangeSignal.connect(self.ChangeRunButton)
+        self.CodeHintChangeSignal.connect(self.ChangeCodeHint)
+        self.LeaveButtonChangeSignal.connect(self.ChangeLeaveButton)
+
+        self.RunButton.clicked.connect(self.RunJoinerThread)
+        self.LeaveButton.clicked.connect(self.RunLeaverThread)
+
+    def RunJoinerThread(self):
+        Thread(target=self.RunJoiner).start()
+
+    def RunLeaverThread(self):
+        Thread(target=self.RunLeaver).start()
+
+    def RunLeaver(self):
+        if self.LeaverIsWorking:
+            return
+
+        self.LeaverIsWorking = True
+
+        Window.TokenHintChangeSignal.emit({
+            'text':
+            'ТОКЕНЫ АККАУНТОВ, ВЕБХУКИ',
+            'style':
+            'color: rgb(175, 177, 181);\n'
+            'font: 87 8pt \'Segoe UI Black\';'
+        })
+
+        self.CodeHintChangeSignal.emit({
+            'text':
+            'КОД ПРИГЛАШЕНИЯ',
+            'style':
+            'color: rgb(175, 177, 181);\n'
+            'font: 87 8pt \'Segoe UI Black\';'
+        })
+
+        if self.InviteInput.toPlainText().strip().isdigit():
+            GuildID = int(self.InviteInput.toPlainText().strip())
+
+        else:
+            InviteCode = self.InviteInput.toPlainText().strip().replace(
+                'https://',
+                '').replace('http://',
+                            '').replace('discord.gg',
+                                        '').replace('discord.com/invite',
+                                                    '').replace('/', '')
+
+            Response = requests.get(
+                f'https://discord.com/api/v9/invites/{InviteCode}',
+                headers={'User-Agent': APPState.UserAgent})
+
+            if not Response.ok:
+                self.CodeHintChangeSignal.emit({
+                    'text':
+                    f'КОД ПРИГЛАШЕНИЯ - НЕВЕРЕН',
+                    'style':
+                    'color: rgb(243, 134, 136);\n'
+                    'font: 87 8pt \'Segoe UI Black\';'
+                })
+
+                return
+
+            else:
+                GuildID = int(Response.json()['guild']['id'])
+
+        Tokens = Window.TokenInput.toPlainText().strip().split(
+            '\n') if '\n' in Window.TokenInput.toPlainText().strip() else [
+                Window.TokenInput.toPlainText().strip()
+            ]
+
+        TokensWithoutWH = []
+
+        for Token in Tokens:
+            if not Token.startswith('https://'):
+                TokensWithoutWH.append(Token.strip())
+
+        Tokens = TokensWithoutWH
+
+        LineID = 0
+
+        for Token in Tokens:
+            LineID += 1
+
+            try:
+                self.LeaveButtonChangeSignal.emit({
+                    'text':
+                    f'{LineID}/{len(Tokens)}',
+                    'style':
+                    'background-color: rgb(60, 63, 69);\n'
+                    'border-radius: 3;\n'
+                    'font: 87 8pt \'Segoe UI Black\';\n'
+                    'color: rgb(255, 255, 255);'
+                })
+
+                Response = requests.get('https://discord.com/api/v9/users/@me',
+                                        headers={
+                                            'Authorization': Token,
+                                            'User-Agent': APPState.UserAgent
+                                        })
+
+                if Response.status_code == 401:
+                    raise ValueError('401: Unauthorized')
+
+            except:
+                Window.TokenHintChangeSignal.emit({
+                    'text':
+                    f'ТОКЕНЫ - #{LineID} неверен.',
+                    'style':
+                    'color: rgb(243, 134, 136);\n'
+                    'font: 87 8pt \'Segoe UI Black\';'
+                })
+
+        LineID = 1
+
+        for Token in Tokens:
+            self.LeaveButtonChangeSignal.emit({
+                'text':
+                f'{LineID}/{len(Tokens)}',
+                'style':
+                'background-color: rgb(114, 137, 218);\n'
+                'border-radius: 3;\n'
+                'font: 87 8pt \'Segoe UI Black\';\n'
+                'color: rgb(255, 255, 255);'
+            })
+
+            Response = LeaveGuild(Token, GuildID)
+
+            if not Response.ok:
+                LogWrite(f'{Token} - ошибка: {Response.status_code}')
+
+            LineID += 1
+
+        self.LeaveButtonChangeSignal.emit({
+            'text':
+            'Выйти',
+            'style':
+            'QPushButton {\n'
+            '    background-color: rgb(59, 165, 93);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}\n'
+            '\n'
+            'QPushButton:hover {\n'
+            '    background-color: rgb(53, 149, 84);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}'
+            'QPushButton:pressed {\n'
+            '    background-color: rgb(44, 124, 70);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}'
+        })
+
+        self.LeaverIsWorking = False
+
+    def RunJoiner(self):
+        if self.JoinerIsWorking:
+            return
+
+        self.JoinerIsWorking = True
+
+        Window.TokenHintChangeSignal.emit({
+            'text':
+            'ТОКЕНЫ АККАУНТОВ, ВЕБХУКИ',
+            'style':
+            'color: rgb(175, 177, 181);\n'
+            'font: 87 8pt \'Segoe UI Black\';'
+        })
+
+        self.CodeHintChangeSignal.emit({
+            'text':
+            'КОД ПРИГЛАШЕНИЯ',
+            'style':
+            'color: rgb(175, 177, 181);\n'
+            'font: 87 8pt \'Segoe UI Black\';'
+        })
+
+        Tokens = Window.TokenInput.toPlainText().strip().split(
+            '\n') if '\n' in Window.TokenInput.toPlainText().strip() else [
+                Window.TokenInput.toPlainText().strip()
+            ]
+
+        TokensWithoutWH = []
+
+        for Token in Tokens:
+            if not Token.startswith('https://'):
+                TokensWithoutWH.append(Token.strip())
+
+        Tokens = TokensWithoutWH
+
+        InviteCode = self.InviteInput.toPlainText().strip().replace(
+            'https://',
+            '').replace('http://',
+                        '').replace('discord.gg',
+                                    '').replace('discord.com/invite',
+                                                '').replace('/', '')
+
+        Response = requests.get(
+            f'https://discord.com/api/v9/invites/{InviteCode}',
+            headers={'User-Agent': APPState.UserAgent})
+
+        if not Response.ok:
+            self.CodeHintChangeSignal.emit({
+                'text':
+                f'КОД ПРИГЛАШЕНИЯ - НЕВЕРЕН',
+                'style':
+                'color: rgb(243, 134, 136);\n'
+                'font: 87 8pt \'Segoe UI Black\';'
+            })
+
+            return
+
+        LineID = 0
+
+        for Token in Tokens:
+            LineID += 1
+
+            try:
+                self.RunButtonChangeSignal.emit({
+                    'text':
+                    f'{LineID}/{len(Tokens)}',
+                    'style':
+                    'background-color: rgb(60, 63, 69);\n'
+                    'border-radius: 3;\n'
+                    'font: 87 8pt \'Segoe UI Black\';\n'
+                    'color: rgb(255, 255, 255);'
+                })
+
+                Response = requests.get('https://discord.com/api/v9/users/@me',
+                                        headers={
+                                            'Authorization': Token,
+                                            'User-Agent': APPState.UserAgent
+                                        })
+
+                if Response.status_code == 401:
+                    raise ValueError('401: Unauthorized')
+
+            except:
+                Window.TokenHintChangeSignal.emit({
+                    'text':
+                    f'ТОКЕНЫ - #{LineID} неверен.',
+                    'style':
+                    'color: rgb(243, 134, 136);\n'
+                    'font: 87 8pt \'Segoe UI Black\';'
+                })
+
+        LineID = 1
+
+        for Token in Tokens:
+            self.RunButtonChangeSignal.emit({
+                'text':
+                f'{LineID}/{len(Tokens)}',
+                'style':
+                'background-color: rgb(114, 137, 218);\n'
+                'border-radius: 3;\n'
+                'font: 87 8pt \'Segoe UI Black\';\n'
+                'color: rgb(255, 255, 255);'
+            })
+
+            Response = JoinGuild(Token, InviteCode)
+
+            if not Response.ok:
+                LogWrite(f'{Token} - ошибка: {Response.status_code}')
+
+            LineID += 1
+
+            sleep(3)
+
+        self.RunButtonChangeSignal.emit({
+            'text':
+            'Войти',
+            'style':
+            'QPushButton {\n'
+            '    background-color: rgb(88, 101, 242);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255);\n'
+            '}\n'
+            '\n'
+            'QPushButton:hover {\n'
+            '    background-color: rgb(81, 93, 224);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255);\n'
+            '}'
+            'QPushButton:pressed {\n'
+            '    background-color: rgb(64, 73, 177);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}'
+        })
+
+        self.CodeHintChangeSignal.emit({
+            'text':
+            'КОД ПРИГЛАШЕНИЯ',
+            'style':
+            'color: rgb(175, 177, 181);\n'
+            'font: 87 8pt \'Segoe UI Black\';'
+        })
+
+        self.JoinerIsWorking = False
+
+    def ChangeLeaveButton(self, event):
+        self.LeaveButton.setText(event['text'])
+        self.LeaveButton.setStyleSheet(event['style'])
+
+    def ChangeRunButton(self, event):
+        self.RunButton.setText(event['text'])
+        self.RunButton.setStyleSheet(event['style'])
+
+    def ChangeCodeHint(self, event):
+        self.CodeHint.setText(event['text'])
+        self.CodeHint.setStyleSheet(event['style'])
+
+    def PinButtonHoverEvent(self, event):
+        if not self.IsPinned:
+            if event == 'enterEvent':
+                self.PinButton.setStyleSheet(
+                    'background-color: rgb(60, 63, 69);\n'
+                    'border-radius: 5')
+            else:
+                self.PinButton.setStyleSheet(
+                    'background-color: rgb(47, 49, 54);\n'
+                    'border-radius: 5')
+        else:
+            if event == 'enterEvent':
+                self.PinButton.setStyleSheet(
+                    'background-color: rgb(53, 149, 84);\n'
+                    'border-radius: 5')
+            else:
+                self.PinButton.setStyleSheet(
+                    'background-color: rgb(59, 165, 93);\n'
+                    'border-radius: 5')
+
+    def ChangeWindowMovement(self, event):
+        if event == 'enterEvent':
+            AllowWindowMovement.JoinerWindow = True
+
+        else:
+            AllowWindowMovement.JoinerWindow = False
+
+    def PinWindow(self):
+        self.IsPinned = not self.IsPinned
+
+        if not self.IsPinned:
+            self.PinButton.setStyleSheet('background-color: rgb(47, 49, 54);\n'
+                                         'border-radius: 5')
+        else:
+            self.PinButton.setStyleSheet(
+                'background-color: rgb(59, 165, 93);\n'
+                'border-radius: 5')
+
+        if self.IsPinned:
+            self.setWindowFlags(self.windowFlags()
+                                | QtCore.Qt.WindowStaysOnTopHint)
+            self.show()
+        else:
+            self.setWindowFlags(self.windowFlags()
+                                & ~QtCore.Qt.WindowStaysOnTopHint)
+            self.show()
+
+    def Close(self):
+        APPState.JoinerWindowIsOpened = False
+        self.close()
+
+
+class JoinerWindow(Ui_JoinerWindow):
+
+    def __init__(self):
+        super().__init__()
+        self.InitWindow(self)
+
+    def mousePressEvent(self, event):
+        if AllowWindowMovement.JoinerWindow:
+            try:
+                if event.button() == QtCore.Qt.LeftButton:
+                    self.old_pos = event.pos()
+            except:
+                pass
+
+    def mouseReleaseEvent(self, event):
+        if AllowWindowMovement.JoinerWindow:
+            try:
+                if event.button() == QtCore.Qt.LeftButton:
+                    self.old_pos = None
+            except:
+                pass
+
+    def mouseMoveEvent(self, event):
+        if AllowWindowMovement.JoinerWindow:
+            try:
+                if not self.old_pos:
+                    return
+                delta = event.pos() - self.old_pos
+                self.move(self.pos() + delta)
+            except:
+                pass
+
+
 class Ui_MainWindow(QtWidgets.QMainWindow):
 
     IsPinned = False
@@ -588,7 +1396,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
     Property_WindowSizeX = 286
     Property_WindowSizeY = 459
 
-    UserAgent = UAgent().random
+    UserAgent = APPState.UserAgent
 
     def InitWindow(self, MainWindow):
         MainWindow.setObjectName('MainWindow')
@@ -751,6 +1559,33 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             '    color: rgb(255, 255, 255)\n'
             '}')
         self.AttackButton.setObjectName('AttackButton')
+
+        self.OpenJoinerWindowButton = PYQTHoverButton(self.CentralWidget)
+        self.OpenJoinerWindowButton.setGeometry(QtCore.QRect(10, 416, 61, 31))
+        self.OpenJoinerWindowButton.setCursor(
+            QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.OpenJoinerWindowButton.setStyleSheet(
+            'QPushButton {\n'
+            '    background-color: rgb(155, 89, 182);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255);\n'
+            '}\n'
+            '\n'
+            'QPushButton:hover {\n'
+            '    background-color: rgb(128, 67, 153);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255);\n'
+            '}'
+            'QPushButton:pressed {\n'
+            '    background-color: rgb(101, 49, 122);\n'
+            '    border-radius: 3;\n'
+            '    font: 87 8pt \'Segoe UI Black\';\n'
+            '    color: rgb(255, 255, 255)\n'
+            '}')
+        self.OpenJoinerWindowButton.setObjectName('OpenJoinerWindowButton')
+
         self.LogsButton = PYQTHoverButton(self.CentralWidget)
         self.LogsButton.setGeometry(QtCore.QRect(125, 416, 56, 31))
         self.LogsButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
@@ -900,6 +1735,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.WindowTitleLabel.raise_()
         self.CloseButton.raise_()
         self.AttackButton.raise_()
+        self.OpenJoinerWindowButton.raise_()
         self.LogsButton.raise_()
         self.TokenInput.raise_()
         self.TokenHint.raise_()
@@ -929,6 +1765,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.DelaySecHint.setText('СЕК')
         self.PinButton.setToolTip('Закрепить окно на переднем плане')
         self.HideButton.setToolTip('Свернуть')
+        self.OpenJoinerWindowButton.setText('Joiner')
 
         self.WindowTitleLabel.HoverSignal.connect(self.ChangeWindowMovement)
         self.WindowMovementHitbox.HoverSignal.connect(
@@ -940,6 +1777,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.PinButton.clicked.connect(self.PinWindow)
 
         self.LogsButton.clicked.connect(self.ShowLogs)
+        self.OpenJoinerWindowButton.clicked.connect(self.ShowJoiner)
 
         self.TokenHintChangeSignal.connect(self.ChangeTokenInput)
         self.ChannelsHintChangeSignal.connect(self.ChangeChannelHint)
@@ -1304,6 +2142,17 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             print(e)
 
+    def ShowJoiner(self):
+        try:
+            if not APPState.JoinerWindowIsOpened:
+                global JoinerWindow_Worker
+
+                JoinerWindow_Worker = JoinerWindow()
+                JoinerWindow_Worker.show()
+
+        except Exception as e:
+            print(e)
+
     def ChangeWindowMovement(self, event):
         if event == 'enterEvent':
             AllowWindowMovement.MainWindow = True
@@ -1467,19 +2316,19 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
             '}')
         self.setWindowFlags(QtCore.Qt.FramelessWindowHint)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
-        self.centralwidget = QtWidgets.QWidget(WarningWindow)
-        self.centralwidget.setObjectName('centralwidget')
-        self.MainBG = PYQTHoverLabel(self.centralwidget)
+        self.CentralWidget = QtWidgets.QWidget(WarningWindow)
+        self.CentralWidget.setObjectName('centralwidget')
+        self.MainBG = PYQTHoverLabel(self.CentralWidget)
         self.MainBG.setGeometry(QtCore.QRect(0, 0, 296, 271))
         self.MainBG.setStyleSheet('background-color: rgb(47, 49, 54);\n'
                                   'border-radius: 10')
         self.MainBG.setObjectName('MainBG')
-        self.FormBG = PYQTHoverLabel(self.centralwidget)
+        self.FormBG = PYQTHoverLabel(self.CentralWidget)
         self.FormBG.setGeometry(QtCore.QRect(5, 35, 286, 186))
         self.FormBG.setStyleSheet('background-color: rgb(54, 57, 63);\n'
                                   'border-radius: 10')
         self.FormBG.setObjectName('FormBG')
-        self.CloseButton = PYQTHoverButton(self.centralwidget)
+        self.CloseButton = PYQTHoverButton(self.CentralWidget)
         self.CloseButton.setGeometry(QtCore.QRect(260, 5, 31, 26))
         self.CloseButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.CloseButton.setStyleSheet(
@@ -1496,7 +2345,7 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
                        QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.CloseButton.setIcon(icon)
         self.CloseButton.setObjectName('CloseButton')
-        self.PinButton = PYQTHoverButton(self.centralwidget)
+        self.PinButton = PYQTHoverButton(self.CentralWidget)
         self.PinButton.setGeometry(QtCore.QRect(225, 5, 31, 26))
         self.PinButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.PinButton.setStyleSheet('background-color: rgb(47, 49, 54);\n'
@@ -1506,7 +2355,7 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
                         QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.PinButton.setIcon(icon1)
         self.PinButton.setObjectName('PinButton')
-        self.HideButton = PYQTHoverButton(self.centralwidget)
+        self.HideButton = PYQTHoverButton(self.CentralWidget)
         self.HideButton.setGeometry(QtCore.QRect(190, 5, 31, 26))
         self.HideButton.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.HideButton.setStyleSheet(
@@ -1523,7 +2372,7 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
                         QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.HideButton.setIcon(icon2)
         self.HideButton.setObjectName('HideButton')
-        self.WindowTitleLabel = PYQTHoverLabel(self.centralwidget)
+        self.WindowTitleLabel = PYQTHoverLabel(self.CentralWidget)
         self.WindowTitleLabel.setGeometry(QtCore.QRect(10, 5, 116, 26))
         self.WindowTitleLabel.setStyleSheet(
             'color: rgb(200, 200, 200);\n'
@@ -1532,12 +2381,12 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
                                            | QtCore.Qt.AlignLeft
                                            | QtCore.Qt.AlignVCenter)
         self.WindowTitleLabel.setObjectName('WindowTitleLabel')
-        self.WindowMovementHitbox = PYQTHoverLabel(self.centralwidget)
+        self.WindowMovementHitbox = PYQTHoverLabel(self.CentralWidget)
         self.WindowMovementHitbox.setGeometry(QtCore.QRect(130, 5, 56, 26))
         self.WindowMovementHitbox.setStyleSheet(
             'background-color: rgb(47, 49, 54)')
         self.WindowMovementHitbox.setObjectName('WindowMovementHitbox')
-        self.WarningIcon = PYQTHoverLabel(self.centralwidget)
+        self.WarningIcon = PYQTHoverLabel(self.CentralWidget)
         self.WarningIcon.setGeometry(QtCore.QRect(15, 45, 51, 51))
         self.WarningIcon.setPixmap(
             QtGui.QPixmap(GetResourcePath('warning.png')))
@@ -1546,7 +2395,7 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
                                       | QtCore.Qt.AlignLeft
                                       | QtCore.Qt.AlignVCenter)
         self.WarningIcon.setObjectName('WarningIcon')
-        self.WarningText = PYQTHoverLabel(self.centralwidget)
+        self.WarningText = PYQTHoverLabel(self.CentralWidget)
         self.WarningText.setGeometry(QtCore.QRect(75, 45, 211, 171))
         self.WarningText.setStyleSheet('color: rgb(175, 177, 181);\n'
                                        'font: 87 8pt \'Segoe UI Black\';')
@@ -1554,7 +2403,7 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
                                       | QtCore.Qt.AlignLeft
                                       | QtCore.Qt.AlignTop)
         self.WarningText.setObjectName('WarningText')
-        self.Accept = PYQTHoverButton(self.centralwidget)
+        self.Accept = PYQTHoverButton(self.CentralWidget)
         self.Accept.setGeometry(QtCore.QRect(145, 230, 141, 31))
         self.Accept.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.Accept.setStyleSheet('QPushButton {\n'
@@ -1571,7 +2420,7 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
                                   '    color: rgb(255, 255, 255);\n'
                                   '}')
         self.Accept.setObjectName('Accept')
-        WarningWindow.setCentralWidget(self.centralwidget)
+        WarningWindow.setCentralWidget(self.CentralWidget)
 
         QtCore.QMetaObject.connectSlotsByName(WarningWindow)
 
@@ -1660,10 +2509,10 @@ class Ui_WarningWindow(QtWidgets.QMainWindow):
 
         self.hide()
 
-        global MainWindow_Worker
+        global Window
 
-        MainWindow_Worker = MainWindow()
-        MainWindow_Worker.show()
+        Window = MainWindow()
+        Window.show()
 
 
 class WarningWindow(Ui_WarningWindow):
