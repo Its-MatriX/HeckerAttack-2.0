@@ -961,11 +961,11 @@ class Ui_JoinerWindow(QtWidgets.QMainWindow):
 
         QtCore.QMetaObject.connectSlotsByName(JoinerWindow)
 
-        JoinerWindow.setWindowTitle('HeckerAttack 2.0 - Guild Joiner')
+        JoinerWindow.setWindowTitle('HeckerAttack 2.0 - Guild Joiner/Leaver')
         self.CloseButton.setToolTip('Закрыть')
         self.PinButton.setToolTip('Закрепить окно на переднем плане')
         self.HideButton.setToolTip('Свернуть')
-        self.WindowTitleLabel.setText('Joiner')
+        self.WindowTitleLabel.setText('Joiner/Leaver')
         self.CodeHint.setText('КОД ПРИГЛАШЕНИЯ')
         self.RunButton.setText('Войти')
         self.LeaveButton.setText('Выйти')
